@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+submissions/*.json
+!submissions/.gitkeep
+competition_dataset/*
+!competition_dataset/.gitkeep
+.DS_Store

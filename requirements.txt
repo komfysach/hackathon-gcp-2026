@@ -1,0 +1,4 @@
+google-genai>=0.8
+google-adk>=1.31
+python-dotenv>=1.0
+Pillow>=11.0

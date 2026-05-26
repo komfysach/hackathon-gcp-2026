@@ -1,0 +1,104 @@
+{
+  "name": "Google Guessing Game Dataset",
+  "description": "10 counting problems where every item is individually visible in the image and the exact count is independently verified. Six samples from the FSC-147 few-shot counting benchmark (dot-annotated by researchers); four from the Puzzle a Day blog (author-verified with revealed answers). Built for a hackathon.",
+  "version": "1.0.0",
+  "created": "2026-04-17",
+  "examples": [
+    {
+      "id": 1,
+      "question": "How many apples are in this picture?",
+      "image": "1_apples_11.jpg",
+      "exact_count": 11,
+      "category": "produce",
+      "source_name": "FSC-147 counting dataset, image 2151",
+      "source_url": "https://github.com/cvlab-stonybrook/LearningToCountEverything",
+      "verification": "Dot-annotated by FSC-147 authors (Ranjan et al., CVPR 2021). Count = number of point annotations."
+    },
+    {
+      "id": 2,
+      "question": "How many eggs are in this carton?",
+      "image": "2_eggs_12.jpg",
+      "exact_count": 12,
+      "category": "food",
+      "source_name": "FSC-147 counting dataset, image 6804",
+      "source_url": "https://github.com/cvlab-stonybrook/LearningToCountEverything",
+      "verification": "Dot-annotated by FSC-147 authors."
+    },
+    {
+      "id": 3,
+      "question": "How many gingerbread people do we have in the picture?",
+      "image": "3_gingerbread_24.jpeg",
+      "exact_count": 24,
+      "category": "food"
+    },
+    {
+      "id": 4,
+      "question": "How many mushrooms do we have in the picture?",
+      "image": "4_mushrooms_34.jpeg",
+      "exact_count": 34,
+      "category": "food"
+    },
+    {
+      "id": 5,
+      "question": "How many full cupcakes are in this picture?",
+      "image": "5_cupcakes_36.jpg",
+      "exact_count": 36,
+      "category": "food",
+      "source_name": "FSC-147 counting dataset, image 3819",
+      "source_url": "https://github.com/cvlab-stonybrook/LearningToCountEverything",
+      "verification": "Dot-annotated by FSC-147 authors."
+    },
+    {
+      "id": 6,
+      "question": "How many triangles can you find in this figure (including all sizes)?",
+      "image": "6_triangles_44.jpg",
+      "exact_count": 44,
+      "category": "geometry_puzzle",
+      "source_name": "Puzzle a Day — 'How Many Triangles Can You Find?' (2023-06-03)",
+      "source_url": "https://puzzleaday.wordpress.com/2023/06/03/how-many-triangles-can-you-find/",
+      "verification": "Answer published on the post by the puzzle author."
+    },
+    {
+      "id": 7,
+      "question": "How many coins are in this picture?",
+      "image": "7_coins_63.jpg",
+      "exact_count": 63,
+      "category": "objects",
+      "source_name": "FSC-147 counting dataset, image 7380",
+      "source_url": "https://github.com/cvlab-stonybrook/LearningToCountEverything",
+      "verification": "Dot-annotated by FSC-147 authors."
+    },
+    {
+      "id": 8,
+      "question": "How many squares are in this grid (including all sizes)?",
+      "image": "8_squares_224.png",
+      "exact_count": 224,
+      "category": "geometry_puzzle",
+      "source_name": "Puzzle a Day — 'How Many Squares?' (2024-06-03)",
+      "source_url": "https://puzzleaday.wordpress.com/2024/06/03/how-many-squares-4/",
+      "verification": "Answer published on the post: total of 224 squares (unit + compound) in a 10x7 grid."
+    },
+    {
+      "id": 9,
+      "question": "How many numbers in this picture are in blue?",
+      "image": "9_sudoku_63.jpeg",
+      "exact_count": 63,
+      "category": "objects"
+    },
+    {
+      "id": 10,
+      "question": "How many dogs in this picture?",
+      "image": "10_dogs_8.jpeg",
+      "exact_count": 8,
+      "category": "animals"
+    }
+  ],
+  "notes": {
+    "difficulty_spread": "Counts from 11 to 224, ",
+    "image_licensing": "FSC-147 images are research-use licensed (MIT mirror on HuggingFace: isentropic/FSC147). Puzzle a Day images are from a personal blog and are bundled for internal hackathon evaluation only; do not redistribute.",
+    "suggested_hackathon_tasks": [
+      "Compare prompting strategies: zero-shot ('how many X?') vs. structured ('count by sub-region').",
+      "Compare performance on real photos (FSC-147) vs. diagrams (geometry puzzles)."
+    ]
+  }
+}
