@@ -36,6 +36,7 @@ for _name in ("google_genai", "google_genai.types", "google.genai", "google.gena
     logging.getLogger(_name).setLevel(logging.ERROR)
 
 import agents
+from trace_logger import start_trace, stop_trace
 
 load_dotenv(override=True)
 
@@ -43,7 +44,7 @@ load_dotenv(override=True)
 # Toggle
 # ---------------------------------------------------------------------------
 
-PARALLEL = True
+PARALLEL = False
 # False → run one (agent, question) at a time. Slowest, easiest to follow.
 # True  → fan every (agent, question) out concurrently. Fastest, logs interleave.
 
@@ -58,6 +59,7 @@ ROOT = Path(__file__).parent
 PRACTICE_DATASET_PATH = ROOT / "test_images" / "dataset.json"
 COMPETITION_DATASET_PATH = ROOT / "competition_dataset" / "competition_dataset.json"
 SUBMISSIONS_DIR = ROOT / "submissions"
+LOGS_DIR = ROOT / "logs"
 
 AnswerFn = Callable[[bytes, str, str], Awaitable[int]]
 
@@ -96,6 +98,7 @@ def discover_agents() -> list[AgentSpec]:
 async def run_one(spec: AgentSpec, row: dict, image_bytes: bytes, mime: str) -> None:
     label = f"[{spec.name:<14}] round {row['id']:>2}"
     print(f"{_ts()}  {label}  ▶ starting…", flush=True)
+    log_path = start_trace(LOGS_DIR, spec.name, row["id"])
     t0 = time.monotonic()
     try:
         n = await spec.answer_fn(image_bytes, mime, row["question"])
@@ -134,6 +137,9 @@ async def run_one(spec: AgentSpec, row: dict, image_bytes: bytes, mime: str) -> 
         msg = f"{type(e).__name__}: {str(e)[:120]}"
         print(f"{_ts()}  {label}  ✗ ERROR ({elapsed:.1f}s): {msg}", flush=True)
         spec.results.append({"id": row["id"], "error": str(e), "elapsed_s": round(elapsed, 2)})
+    finally:
+        stop_trace(spec.name, row["id"])
+        print(f"{_ts()}  {label}  📄 log → {log_path.relative_to(ROOT)}", flush=True)
 
 
 async def run_sequential(specs: list[AgentSpec], rows: list[dict], image_dir: Path = ROOT) -> None:

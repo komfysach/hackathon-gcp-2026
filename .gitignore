@@ -6,4 +6,5 @@ submissions/*.json
 !submissions/.gitkeep
 competition_dataset/*
 !competition_dataset/.gitkeep
+logs/
 .DS_Store
