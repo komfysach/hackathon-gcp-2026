@@ -111,20 +111,31 @@ Return only valid JSON with this exact shape:
 {
   "category": "geometric_puzzle" | "scattered_objects" | "mixed_classes",
   "spatial_layout": "flat_spread" | "3d_container",
+  "has_extreme_size_variance": true | false,
+  "explicit_qualifier": "specific subset condition from the user's question, or empty string",
   "density": "low" | "high",
   "distractor_warning": "brief downstream rule, or empty string",
   "recommended_grid": 1 | 2 | 3
 }
 
+Strict fail-safes:
+- CRITICAL DENSITY RULE: Visually estimate the total number of items. If it appears there are fewer than 50 items, you MUST set density to "low". If density is "low", you MUST set recommended_grid to 1 (no slicing). Grid slicing large, sparse objects destroys their boundaries and causes downstream hallucinations.
+- CRITICAL VOLUME RULE: Only set spatial_layout to "3d_container" if there are HUNDREDS of small items (like jelly beans in a jar) where the vast majority are physically hidden from the camera. If you can visually count the items (e.g., a basket of 15 apples or a carton of eggs), you MUST set spatial_layout to "flat_spread" regardless of the physical container. Mathematical estimations on low-count containers will fail.
+- When uncertain between "low" and "high", choose "low" and recommended_grid=1 unless there are clearly 50+ visually countable repeated items.
+- When uncertain between "flat_spread" and "3d_container", choose "flat_spread" unless hundreds of hidden small items make one-by-one visual counting impossible.
+
 Definitions:
 - category="geometric_puzzle" for line/shape combinatorics such as counting all triangles or all squares, including compound shapes. These must keep the full image intact.
 - category="mixed_classes" when the image contains multiple object classes, colors, text styles, or other likely distractors.
 - category="scattered_objects" when the target objects are physical items spread across the scene without major distractor classes.
-- spatial_layout must be strictly either "flat_spread" or "3d_container". Determine if the items are scattered on a flat surface where most items are visible, or if they are piled inside a 3D container (like a jar or bowl) where inner items are hidden from view.
-- density="low" for fewer than 15 target items or sparse layouts; density="high" for dense clusters, jars, piles, or many repeated objects.
-- recommended_grid=1 for geometric puzzles, low-density scenes, or any case where cropping would damage the evidence.
-- recommended_grid=2 for moderately dense scattered objects.
-- recommended_grid=3 for dense clusters where spatial chunking helps.
+- spatial_layout must be strictly either "flat_spread" or "3d_container". Determine if the items are scattered on a flat surface where most items are visible, or if they are piled inside a 3D container where hundreds of small inner items are hidden from view.
+- has_extreme_size_variance must be true if the target objects vary wildly in scale (e.g., some are massive in the foreground, others are tiny in the background).
+- explicit_qualifier comes from the user's question. If they ask for a specific subset (e.g., "full cupcakes", "red cars", "empty glasses"), extract that exact condition. If they just ask "how many X", leave this empty.
+- density="low" for fewer than 50 visible target items, sparse layouts, large objects, or any scene where most items can be visually counted.
+- density="high" only for 50+ repeated visible target items, dense clusters, or hundreds of hidden small objects in a valid 3D container.
+- recommended_grid=1 for geometric puzzles, all low-density scenes, large sparse objects, visually countable containers, or any case where cropping would damage the evidence.
+- recommended_grid=2 for 50+ moderately dense flat-spread objects where spatial chunking helps.
+- recommended_grid=3 for very dense flat-spread clusters where spatial chunking helps.
 
 The distractor_warning should be an imperative rule for the counter, for example:
 "Ignore the cats, count only dogs" or "Count only blue numbers". Leave it empty when there is no distractor."""
@@ -137,6 +148,8 @@ SCENE_ANALYSIS_SCHEMA = {
             "enum": ["geometric_puzzle", "scattered_objects", "mixed_classes"],
         },
         "spatial_layout": {"type": "string", "enum": ["flat_spread", "3d_container"]},
+        "has_extreme_size_variance": {"type": "boolean"},
+        "explicit_qualifier": {"type": "string"},
         "density": {"type": "string", "enum": ["low", "high"]},
         "distractor_warning": {"type": "string"},
         "recommended_grid": {"type": "integer"},
@@ -144,6 +157,8 @@ SCENE_ANALYSIS_SCHEMA = {
     "required": [
         "category",
         "spatial_layout",
+        "has_extreme_size_variance",
+        "explicit_qualifier",
         "density",
         "distractor_warning",
         "recommended_grid",
@@ -159,6 +174,7 @@ CONTAINER_COUNTING_OVERRIDE = (
 ALLOWED_CATEGORIES = {"geometric_puzzle", "scattered_objects", "mixed_classes"}
 ALLOWED_SPATIAL_LAYOUTS = {"flat_spread", "3d_container"}
 ALLOWED_DENSITIES = {"low", "high"}
+WHOLENESS_QUALIFIER_WORDS = {"full", "complete", "whole", "intact", "uncut"}
 
 
 def _clamp_grid(value: object) -> int:
@@ -169,10 +185,25 @@ def _clamp_grid(value: object) -> int:
     return min(3, max(1, grid))
 
 
+def _qualifier_implies_wholeness(explicit_qualifier: str) -> bool:
+    qualifier_words = set(re.findall(r"[a-z]+", explicit_qualifier.lower()))
+    return bool(qualifier_words & WHOLENESS_QUALIFIER_WORDS)
+
+
+def _normalise_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1"}
+    return bool(value)
+
+
 def _fallback_scene_analysis() -> dict[str, object]:
     return {
         "category": "scattered_objects",
         "spatial_layout": "flat_spread",
+        "has_extreme_size_variance": False,
+        "explicit_qualifier": "",
         "density": "low",
         "distractor_warning": "",
         "recommended_grid": 1,
@@ -183,6 +214,8 @@ def _normalise_scene_analysis(raw: dict[str, object]) -> dict[str, object]:
     fallback = _fallback_scene_analysis()
     category = raw.get("category")
     spatial_layout = raw.get("spatial_layout")
+    has_extreme_size_variance = raw.get("has_extreme_size_variance")
+    explicit_qualifier = raw.get("explicit_qualifier")
     density = raw.get("density")
     distractor_warning = raw.get("distractor_warning")
 
@@ -192,14 +225,18 @@ def _normalise_scene_analysis(raw: dict[str, object]) -> dict[str, object]:
         spatial_layout = fallback["spatial_layout"]
     if density not in ALLOWED_DENSITIES:
         density = fallback["density"]
+    if density == "low":
+        spatial_layout = "flat_spread"
 
     grid = _clamp_grid(raw.get("recommended_grid", fallback["recommended_grid"]))
-    if category == "geometric_puzzle" or spatial_layout == "3d_container":
+    if category == "geometric_puzzle" or spatial_layout == "3d_container" or density == "low":
         grid = 1
 
     return {
         "category": str(category),
         "spatial_layout": str(spatial_layout),
+        "has_extreme_size_variance": _normalise_bool(has_extreme_size_variance),
+        "explicit_qualifier": str(explicit_qualifier or ""),
         "density": str(density),
         "distractor_warning": str(distractor_warning or ""),
         "recommended_grid": grid,
@@ -224,12 +261,17 @@ def _parse_json_object(text: str) -> dict[str, object] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-async def analyze_scene(image_bytes: bytes, mime_type: str = "image/png") -> dict[str, object]:
+async def analyze_scene(
+    image_bytes: bytes,
+    mime_type: str = "image/png",
+    question: str = "",
+) -> dict[str, object]:
     """SceneAnalyzer agent: choose the routing strategy, but do not count."""
     try:
         resp = await _client_lazy().aio.models.generate_content(
             model=MODEL,
             contents=[
+                types.Part.from_text(text=f"User counting question: {question}"),
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
             ],
             config=types.GenerateContentConfig(
@@ -256,16 +298,30 @@ def build_counter_instruction(
     *,
     is_grid_chunk: bool,
     density: str,
+    explicit_qualifier: str = "",
+    has_extreme_size_variance: bool = False,
     absolute_override: str | None = None,
 ) -> str:
-    scope_rule = (
-        "Scope: You are analyzing one cropped grid chunk from the original image. "
-        "Use local positions inside this crop, such as top-left, center, or lower-right of the chunk. "
-        "Boundary rule: count all whole target items, plus target items crossing the TOP or LEFT crop borders. "
-        "Do NOT count target items crossing the BOTTOM or RIGHT crop borders."
-        if is_grid_chunk
-        else "Scope: You are analyzing the entire original image. Keep the full spatial layout intact, especially for geometric puzzles where cropping destroys the evidence."
-    )
+    explicit_qualifier = explicit_qualifier.strip()
+    wholeness_required = _qualifier_implies_wholeness(explicit_qualifier)
+    if is_grid_chunk and wholeness_required:
+        scope_rule = (
+            "Scope: You are analyzing one cropped grid chunk from the original image. "
+            "Use local positions inside this crop, such as top-left, center, or lower-right of the chunk. "
+            f"Because the user requested '{explicit_qualifier}', do NOT count any items that are cut off by the edges of the image chunk. "
+            "Only count items that are 100% visible."
+        )
+    elif is_grid_chunk:
+        scope_rule = (
+            "Scope: You are analyzing one cropped grid chunk from the original image. "
+            "Use local positions inside this crop, such as top-left, center, or lower-right of the chunk. "
+            "Boundary rule: count all whole target items, plus target items crossing the TOP or LEFT crop borders. "
+            "Do NOT count target items crossing the BOTTOM or RIGHT crop borders."
+        )
+    else:
+        scope_rule = (
+            "Scope: You are analyzing the entire original image. Keep the full spatial layout intact, especially for geometric puzzles where cropping destroys the evidence."
+        )
 
     distractor_rule = (
         f"CRITICAL RULE: {distractor_warning.strip()}"
@@ -294,8 +350,23 @@ def build_counter_instruction(
         distractor_rule,
         density_rule,
         scope_rule,
-        "If the target rule filters by class, color, text, fullness, or any other attribute, apply that filter strictly before counting.",
+        "CRITICAL VISUAL RULE: Strictly ignore all graphical text overlays, watermarks, banners, and logos. Do not mistake graphic design elements, brush strokes, or text boxes for the objects you are counting.",
     ]
+    if explicit_qualifier:
+        instruction_parts.append(
+            f"CRITICAL FILTER: The user specifically requested only '{explicit_qualifier}'. You MUST ignore any items that do not meet this exact description."
+        )
+    instruction_parts.append(
+        "If the target rule filters by class, color, text, fullness, or any other attribute, apply that filter strictly before counting."
+    )
+    if has_extreme_size_variance:
+        instruction_parts.append(
+            "SCALE VARIANCE DETECTED: The objects in this image exist at drastically different scales. In your reasoning scratchpad, you must perform a 'Multi-Plane Scan'. First, tally all the large, obvious objects in the foreground. Then, perform a second sweep specifically searching for tiny, hidden, or background objects. Combine both tallies for your final count."
+        )
+    if density == "low":
+        instruction_parts.append(
+            "Since this is a low-density image, you MUST enumerate each object to avoid double-counting. In your reasoning scratchpad, create a strict numbered list (1, 2, 3...). For each number, you must provide a brief description of that specific object's unique location (e.g., '1. Bottom left foreground', '2. Inside the basket right', '3. Partially hidden behind basket handle'). Do not add a number unless you are identifying a distinct, new physical object. Your FINAL ANSWER: <integer> must exactly match the highest number in your generated list."
+        )
     if absolute_override:
         instruction_parts.extend(
             [
@@ -356,6 +427,8 @@ async def count_image_target(
     is_grid_chunk: bool,
     density: str = "low",
     mime_type: str = "image/png",
+    explicit_qualifier: str = "",
+    has_extreme_size_variance: bool = False,
     absolute_override: str | None = None,
 ) -> int:
     """GroundedCounter agent: count only the instructed target."""
@@ -365,6 +438,8 @@ async def count_image_target(
         distractor_warning,
         is_grid_chunk=is_grid_chunk,
         density=density,
+        explicit_qualifier=explicit_qualifier,
+        has_extreme_size_variance=has_extreme_size_variance,
         absolute_override=absolute_override,
     )
 
@@ -413,6 +488,8 @@ async def run_consensus_manager(
     density: str = "low",
     mime_type: str = "image/png",
     passes: int = 3,
+    explicit_qualifier: str = "",
+    has_extreme_size_variance: bool = False,
     absolute_override: str | None = None,
 ) -> int:
     counts = await asyncio.gather(
@@ -423,6 +500,8 @@ async def run_consensus_manager(
                 is_grid_chunk=is_grid_chunk,
                 density=density,
                 mime_type=mime_type,
+                explicit_qualifier=explicit_qualifier,
+                has_extreme_size_variance=has_extreme_size_variance,
                 absolute_override=absolute_override,
             )
             for _ in range(passes)
@@ -449,9 +528,13 @@ def _build_grounded_counter_rule(question: str, distractor_warning: object) -> s
 
 async def answer(image_bytes: bytes, mime_type: str, question: str) -> int:
     image_bytes, mime_type = _shrink(image_bytes, mime_type)
-    strategy = await analyze_scene(image_bytes, mime_type)
+    strategy = await analyze_scene(image_bytes, mime_type, question)
     category = str(strategy.get("category", "scattered_objects"))
     spatial_layout = str(strategy.get("spatial_layout", "flat_spread"))
+    explicit_qualifier = str(strategy.get("explicit_qualifier", ""))
+    has_extreme_size_variance = _normalise_bool(
+        strategy.get("has_extreme_size_variance", False)
+    )
     density = str(strategy.get("density", "low"))
     grid_size = _clamp_grid(strategy.get("recommended_grid", 2))
     counter_rule = _build_grounded_counter_rule(question, strategy.get("distractor_warning", ""))
@@ -464,6 +547,8 @@ async def answer(image_bytes: bytes, mime_type: str, question: str) -> int:
             is_grid_chunk=False,
             density=density,
             mime_type=mime_type,
+            explicit_qualifier=explicit_qualifier,
+            has_extreme_size_variance=has_extreme_size_variance,
         )
         _logger.info("Total full-image count: %d", total_count)
         return total_count
@@ -478,6 +563,8 @@ async def answer(image_bytes: bytes, mime_type: str, question: str) -> int:
             is_grid_chunk=False,
             density=density,
             mime_type=mime_type,
+            explicit_qualifier=explicit_qualifier,
+            has_extreme_size_variance=has_extreme_size_variance,
             absolute_override=CONTAINER_COUNTING_OVERRIDE,
         )
         _logger.info("Total 3D-container count: %d", total_count)
@@ -504,6 +591,8 @@ async def answer(image_bytes: bytes, mime_type: str, question: str) -> int:
             is_grid_chunk=True,
             density="low",
             mime_type="image/png",
+            explicit_qualifier=explicit_qualifier,
+            has_extreme_size_variance=has_extreme_size_variance,
         )
         for chunk_bytes in chunks
     ]
