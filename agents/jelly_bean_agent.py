@@ -167,8 +167,11 @@ SCENE_ANALYSIS_SCHEMA = {
 
 CONTAINER_COUNTING_OVERRIDE = (
     "CRITICAL: This is a 3D container. You cannot count these one-by-one because the inner items are hidden. "
-    "You MUST call the typical_item_size_cm and volume_estimator tools to calculate the final count mathematically. "
-    "Output your reasoning, then FINAL ANSWER: <integer>."
+    "You MUST calculate the final count mathematically. "
+    "In your reasoning scratchpad, perform Visual Anchoring: estimate the width and height of the container in units of the target item "
+    "(e.g., 'The jar is approximately 10 jelly beans wide and 15 jelly beans tall'). Convert those relative units into centimeters using "
+    "the typical_item_size_cm tool, then feed those dimensions into the volume_estimator tool. Output your reasoning, the tool results, "
+    "and then strictly: FINAL ANSWER: <integer>."
 )
 
 ALLOWED_CATEGORIES = {"geometric_puzzle", "scattered_objects", "mixed_classes"}
@@ -300,6 +303,8 @@ def build_counter_instruction(
     density: str,
     explicit_qualifier: str = "",
     has_extreme_size_variance: bool = False,
+    spatial_strategy: str = "",
+    is_geometric_puzzle: bool = False,
     absolute_override: str | None = None,
 ) -> str:
     explicit_qualifier = explicit_qualifier.strip()
@@ -342,7 +347,11 @@ def build_counter_instruction(
             "Map local clusters or rows, estimate dense groups if needed, apply the crop boundary rule, and always output FINAL ANSWER: <integer>."
         )
     else:
-        density_rule = "Strategy: This is a low-density or sparse image. Count directly using the spatial map."
+        density_rule = (
+            "Strategy: This is a low-density scene with fewer than 50 items. Rely on your immediate visual gestalt. "
+            "Do not mentally divide the image into grids or quadrants. Just scan the scene naturally, identify the distinct objects, "
+            "and count them directly. Be decisive and commit to one integer."
+        )
 
     instruction_parts = [
         "You are the GroundedCounter worker in a multi-agent vision-router counting pipeline.",
@@ -363,16 +372,18 @@ def build_counter_instruction(
         instruction_parts.append(
             "SCALE VARIANCE DETECTED: The objects in this image exist at drastically different scales. In your reasoning scratchpad, you must perform a 'Multi-Plane Scan'. First, tally all the large, obvious objects in the foreground. Then, perform a second sweep specifically searching for tiny, hidden, or background objects. Combine both tallies for your final count."
         )
-    if density == "low":
-        instruction_parts.append(
-            "Since this is a low-density image, you MUST enumerate each object to avoid double-counting. In your reasoning scratchpad, create a strict numbered list (1, 2, 3...). For each number, you must provide a brief description of that specific object's unique location (e.g., '1. Bottom left foreground', '2. Inside the basket right', '3. Partially hidden behind basket handle'). Do not add a number unless you are identifying a distinct, new physical object. Your FINAL ANSWER: <integer> must exactly match the highest number in your generated list."
-        )
+    if spatial_strategy and not absolute_override and (density == "high" or is_grid_chunk or is_geometric_puzzle):
+        instruction_parts.append(spatial_strategy.strip())
     if absolute_override:
         instruction_parts.extend(
             [
                 "Use the full-image container geometry, visible fill level, and typical item size to estimate the hidden volume mathematically.",
                 "Output format: Provide your reasoning and tool-based calculation, then on a new line at the very end output strictly: FINAL ANSWER: <integer>.",
             ]
+        )
+    elif density == "low" and not is_geometric_puzzle:
+        instruction_parts.append(
+            "Output format: Provide a very brief 1-sentence justification, then immediately output strictly: FINAL ANSWER: <integer> on its own line."
         )
     else:
         instruction_parts.extend(
@@ -429,6 +440,8 @@ async def count_image_target(
     mime_type: str = "image/png",
     explicit_qualifier: str = "",
     has_extreme_size_variance: bool = False,
+    spatial_strategy: str = "",
+    is_geometric_puzzle: bool = False,
     absolute_override: str | None = None,
 ) -> int:
     """GroundedCounter agent: count only the instructed target."""
@@ -440,6 +453,8 @@ async def count_image_target(
         density=density,
         explicit_qualifier=explicit_qualifier,
         has_extreme_size_variance=has_extreme_size_variance,
+        spatial_strategy=spatial_strategy,
+        is_geometric_puzzle=is_geometric_puzzle,
         absolute_override=absolute_override,
     )
 
@@ -490,8 +505,15 @@ async def run_consensus_manager(
     passes: int = 3,
     explicit_qualifier: str = "",
     has_extreme_size_variance: bool = False,
+    is_geometric_puzzle: bool = False,
     absolute_override: str | None = None,
 ) -> int:
+    scanning_strategies = [
+        "Spatial Strategy: Mentally divide the image into horizontal bands. Scan strictly top to bottom, reading left to right like a book.",
+        "Spatial Strategy: Mentally divide the image into four equal quadrants (Top-Left, Top-Right, Bottom-Left, Bottom-Right). Tally each quadrant completely before moving to the next, then sum them.",
+        "Spatial Strategy: Count the objects touching the outside edges of the image first, then spiral your attention inward toward the center.",
+    ]
+    use_spatial_strategies = density == "high" or is_grid_chunk
     counts = await asyncio.gather(
         *[
             count_image_target(
@@ -502,9 +524,15 @@ async def run_consensus_manager(
                 mime_type=mime_type,
                 explicit_qualifier=explicit_qualifier,
                 has_extreme_size_variance=has_extreme_size_variance,
+                spatial_strategy=(
+                    scanning_strategies[index % len(scanning_strategies)]
+                    if use_spatial_strategies
+                    else ""
+                ),
+                is_geometric_puzzle=is_geometric_puzzle,
                 absolute_override=absolute_override,
             )
-            for _ in range(passes)
+            for index in range(passes)
         ]
     )
 
@@ -549,6 +577,7 @@ async def answer(image_bytes: bytes, mime_type: str, question: str) -> int:
             mime_type=mime_type,
             explicit_qualifier=explicit_qualifier,
             has_extreme_size_variance=has_extreme_size_variance,
+            is_geometric_puzzle=category == "geometric_puzzle",
         )
         _logger.info("Total full-image count: %d", total_count)
         return total_count
@@ -557,7 +586,7 @@ async def answer(image_bytes: bytes, mime_type: str, question: str) -> int:
         _logger.info(
             "Path C selected: spatial_layout=3d_container. Sending whole image to GroundedCounter with volume override."
         )
-        total_count = await count_image_target(
+        total_count = await run_consensus_manager(
             image_bytes,
             counter_rule,
             is_grid_chunk=False,

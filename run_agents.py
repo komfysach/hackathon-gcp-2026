@@ -44,11 +44,11 @@ load_dotenv(override=True)
 # Toggle
 # ---------------------------------------------------------------------------
 
-PARALLEL = False
+PARALLEL = True
 # False → run one (agent, question) at a time. Slowest, easiest to follow.
 # True  → fan every (agent, question) out concurrently. Fastest, logs interleave.
 
-COMPETITION = False
+COMPETITION = True
 # False → run on the practice dataset (test_images/ + dataset.json, with known answers).
 # True  → run on the competition dataset (competition_dataset/ + competition_dataset.json).
 #          Set this to True once you receive the competition files at the end of the hackathon.
